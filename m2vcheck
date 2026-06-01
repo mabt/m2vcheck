@@ -159,7 +159,10 @@ detect_php() {
 
 detect_composer() {
     command -v composer >/dev/null 2>&1 || return
-    composer --version 2>/dev/null | grep -oP 'Composer( version)? \K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    # </dev/null + --no-interaction : évite tout prompt (avertissement root,
+    # confirmation de plugin tiers, etc.) qui ferait freezer le script.
+    COMPOSER_NO_INTERACTION=1 composer --no-interaction --version 2>/dev/null </dev/null \
+        | grep -oP 'Composer( version)? \K[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
 detect_mariadb() {
@@ -377,7 +380,7 @@ check_simple() {
     local label="$1" key="$2" detect_fn="$3" optional="${4:-0}"
     local spec="${SPEC[$key]:-}"
     local v
-    v=$($detect_fn)
+    v=$($detect_fn </dev/null)
     if [[ -z "$spec" ]]; then
         # Magento ne mentionne pas ce composant pour cette version
         [[ -z "$v" ]] && return
@@ -407,7 +410,7 @@ check_alt_group() {
         IFS='|' read -r label key fn <<<"$entry"
         local spec="${SPEC[$key]:-}"
         local v
-        v=$($fn)
+        v=$($fn </dev/null)
         if [[ -z "$spec" ]]; then
             if [[ -n "$v" ]]; then
                 results+=("warn|$label|$v|non supporté|présent mais pas listé par Adobe pour Magento $VERSION")
