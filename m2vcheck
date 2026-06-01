@@ -1,0 +1,514 @@
+#!/usr/bin/env bash
+# m2vcheck — vérifie les prérequis Adobe Commerce / Magento 2 sur Debian 10-13
+#
+# Source des prérequis :
+#   https://experienceleague.adobe.com/fr/docs/commerce-operations/installation-guide/system-requirements
+#
+# Usage :
+#   m2vcheck <version>     # ex : m2vcheck 2.4.9
+#   m2vcheck --list        # liste les versions connues
+#
+# Codes de sortie :
+#   0  tout est conforme
+#   1  au moins un composant requis manque ou est en version incorrecte
+#   2  erreur d'usage
+
+set -uo pipefail
+
+# ─────────────────────────── arguments ───────────────────────────
+VERSION="${1:-}"
+
+if [[ -z "$VERSION" || "$VERSION" == "-h" || "$VERSION" == "--help" ]]; then
+    cat <<EOF
+Usage : m2vcheck <version-magento>
+Versions connues : 2.4.4  2.4.5  2.4.6  2.4.7  2.4.8  2.4.9
+EOF
+    [[ -z "$VERSION" ]] && exit 2 || exit 0
+fi
+
+if [[ "$VERSION" == "--list" ]]; then
+    echo "Versions Magento connues : 2.4.4 2.4.5 2.4.6 2.4.7 2.4.8 2.4.9"
+    exit 0
+fi
+
+# ─────────────────────────── couleurs ───────────────────────────
+if [[ -t 1 ]]; then
+    G=$'\e[38;5;42m'      # vert
+    R=$'\e[38;5;203m'     # rouge
+    Y=$'\e[38;5;214m'     # orange/jaune
+    C=$'\e[38;5;75m'      # cyan/bleu doux
+    M=$'\e[38;5;141m'     # mauve (titre)
+    GR=$'\e[38;5;244m'    # gris
+    B=$'\e[1m'            # gras
+    D=$'\e[2m'            # dim
+    I=$'\e[3m'            # italique
+    REV=$'\e[7m'          # inversé
+    N=$'\e[0m'            # reset
+else
+    G=''; R=''; Y=''; C=''; M=''; GR=''; B=''; D=''; I=''; REV=''; N=''
+fi
+
+# ─────────────────────────── prérequis ──────────────────────────
+# Format de spec : "X.Y"          → la version installée doit avoir ce major.minor
+#                  "X"            → la version installée doit avoir ce major
+#                  "X.Y.Z+"       → version installée >= X.Y.Z
+#                  liste séparée par des virgules : un seul match suffit
+#
+# Composants absents de la liste = "non supporté" pour cette version Magento.
+
+requirements() {
+    case "$1" in
+        2.4.9)
+            cat <<EOF
+php=8.5
+composer=2.9.3+
+mariadb=11.8,12.3
+mysql=8.4
+opensearch=3
+valkey=9
+rabbitmq=4.2
+varnish=8
+nginx=1.28
+apache=2.4
+EOF
+            ;;
+        2.4.8)
+            cat <<EOF
+php=8.3,8.4
+composer=2.9.3+
+mariadb=11.4,11.8
+mysql=8.4
+opensearch=3
+elasticsearch=8
+valkey=8.1
+rabbitmq=4.2
+varnish=8
+nginx=1.28
+apache=2.4
+EOF
+            ;;
+        2.4.7)
+            cat <<EOF
+php=8.2,8.3
+composer=2.9.3+
+mariadb=10.11,11.8
+opensearch=2.19,3
+elasticsearch=7.17,8
+valkey=8.1
+rabbitmq=4.2
+varnish=8
+nginx=1.28
+apache=2.4
+EOF
+            ;;
+        2.4.6)
+            cat <<EOF
+php=8.1,8.2
+composer=2.2.26+
+mariadb=10.11
+opensearch=2.19,3
+valkey=8.1
+rabbitmq=4.2
+varnish=8
+nginx=1.28
+apache=2.4
+EOF
+            ;;
+        2.4.5)
+            cat <<EOF
+php=8.1
+composer=2.2.26+
+mariadb=10.11
+opensearch=2.19
+valkey=8.1
+rabbitmq=4.2
+varnish=8
+nginx=1.28
+apache=2.4
+EOF
+            ;;
+        2.4.4)
+            cat <<EOF
+php=8.1
+composer=2.2.26+
+mariadb=10.6
+opensearch=2.19
+redis=7.2
+rabbitmq=3.9
+varnish=7.7
+nginx=1.28
+apache=2.4
+EOF
+            ;;
+        *)
+            echo "ERREUR : version Magento '$1' inconnue." >&2
+            echo "Versions connues : 2.4.4 2.4.5 2.4.6 2.4.7 2.4.8 2.4.9" >&2
+            exit 2
+            ;;
+    esac
+}
+
+# ─────────────────────────── détecteurs ─────────────────────────
+
+detect_php() {
+    command -v php >/dev/null 2>&1 || return
+    php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION.".".PHP_RELEASE_VERSION;' 2>/dev/null
+}
+
+detect_composer() {
+    command -v composer >/dev/null 2>&1 || return
+    composer --version 2>/dev/null | grep -oP 'Composer( version)? \K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_mariadb() {
+    local out=""
+    if command -v mariadb >/dev/null 2>&1; then
+        out=$(mariadb --version 2>/dev/null)
+    elif command -v mysql >/dev/null 2>&1; then
+        out=$(mysql --version 2>/dev/null)
+    fi
+    [[ -z "$out" ]] && return
+    # Format MariaDB : "... Ver 15.1 Distrib 10.11.6-MariaDB ..."
+    echo "$out" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+(?=-MariaDB)' | head -1
+}
+
+detect_mysql() {
+    command -v mysql >/dev/null 2>&1 || return
+    local out
+    out=$(mysql --version 2>/dev/null)
+    echo "$out" | grep -qi mariadb && return
+    echo "$out" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_redis() {
+    command -v redis-server >/dev/null 2>&1 || return
+    redis-server --version 2>/dev/null | grep -oP 'v=\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_valkey() {
+    command -v valkey-server >/dev/null 2>&1 || return
+    valkey-server --version 2>/dev/null | grep -oP 'v=\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_opensearch() {
+    command -v curl >/dev/null 2>&1 || return
+    local body
+    body=$(curl -fsS -m 2 http://localhost:9200/ 2>/dev/null) || return
+    echo "$body" | grep -qi '"distribution"[[:space:]]*:[[:space:]]*"opensearch"' || return
+    echo "$body" | grep -oP '"number"[[:space:]]*:[[:space:]]*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_elasticsearch() {
+    command -v curl >/dev/null 2>&1 || return
+    local body
+    body=$(curl -fsS -m 2 http://localhost:9200/ 2>/dev/null) || return
+    echo "$body" | grep -qi '"distribution"[[:space:]]*:[[:space:]]*"opensearch"' && return
+    echo "$body" | grep -oP '"number"[[:space:]]*:[[:space:]]*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_rabbitmq() {
+    # dpkg en premier (rapide, pas de sudo)
+    if command -v dpkg-query >/dev/null 2>&1; then
+        local v
+        v=$(dpkg-query -W -f='${Version}' rabbitmq-server 2>/dev/null || true)
+        if [[ -n "$v" ]]; then
+            echo "$v" | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+' | head -1
+            return
+        fi
+    fi
+    command -v rabbitmqctl >/dev/null 2>&1 || return
+    rabbitmqctl version 2>/dev/null | tail -1 | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+'
+}
+
+detect_varnish() {
+    command -v varnishd >/dev/null 2>&1 || return
+    varnishd -V 2>&1 | grep -oP 'varnish-\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_nginx() {
+    command -v nginx >/dev/null 2>&1 || return
+    nginx -v 2>&1 | grep -oP 'nginx/\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+detect_apache() {
+    local cmd=""
+    command -v apache2 >/dev/null 2>&1 && cmd=apache2
+    [[ -z "$cmd" ]] && command -v apachectl >/dev/null 2>&1 && cmd=apachectl
+    [[ -z "$cmd" ]] && return
+    LANG=C "$cmd" -v 2>/dev/null | grep -oP 'Apache/\K[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1
+}
+
+# ────────────────────── comparaison de versions ─────────────────
+
+# Vrai si $1 >= $2  (en tenant compte du tri sémver via sort -V)
+vge() {
+    [[ "$1" == "$2" ]] && return 0
+    [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$2" ]]
+}
+
+# Vrai si la version $1 satisfait la spec $2 (cf. format en tête)
+matches_spec() {
+    local ver="$1" spec="$2" item
+    local IFS=','
+    for item in $spec; do
+        if [[ "$item" == *"+" ]]; then
+            vge "$ver" "${item%+}" && return 0
+            continue
+        fi
+        # nombre de points dans l'item de spec
+        local dots="${item//[^.]/}"
+        local nd=${#dots}
+        if [[ "$nd" -eq 0 ]]; then
+            # spec = un major (ex : "3")
+            [[ "${ver%%.*}" == "$item" ]] && return 0
+        elif [[ "$nd" -eq 1 ]]; then
+            # spec = major.minor → on compare le major.minor de ver
+            local mm
+            mm=$(echo "$ver" | grep -oP '^[0-9]+\.[0-9]+')
+            [[ "$mm" == "$item" ]] && return 0
+        else
+            # spec = major.minor.patch → préfixe exact
+            [[ "$ver" == "$item" || "$ver" == "$item."* ]] && return 0
+        fi
+    done
+    return 1
+}
+
+# ─────────────────────────── affichage ──────────────────────────
+
+FAILED=0
+OK_COUNT=0; KO_COUNT=0; ABS_COUNT=0; WARN_COUNT=0
+
+print_line() {
+    # $1 label, $2 état (ok/ko/abs/warn), $3 version installée, $4 spec, $5 note
+    local label="$1" state="$2" ver="$3" spec="$4" note="${5:-}"
+    local mark color verfmt
+    case "$state" in
+        ok)   mark="✓"; color="$G";  verfmt="${G}${ver}${N}";  OK_COUNT=$((OK_COUNT+1)) ;;
+        ko)   mark="✗"; color="$R";  verfmt="${R}${ver}${N}";  KO_COUNT=$((KO_COUNT+1)) ;;
+        abs)  mark="○"; color="$GR"; verfmt="${GR}—${N}";       ABS_COUNT=$((ABS_COUNT+1)) ;;
+        warn) mark="⚠"; color="$Y";  verfmt="${Y}${ver}${N}";  WARN_COUNT=$((WARN_COUNT+1)) ;;
+    esac
+    # 2 espaces · marqueur · espace · nom (14) · version installée (14 visible) · sép · attendu
+    printf "  %s%s%s " "$color" "$mark" "$N"
+    printf "%-14s" "$label"
+    # le padding doit ignorer les codes ANSI : on compose en deux temps
+    local vis="${ver:--}"
+    printf "%s" "$verfmt"
+    printf "%*s" $((14 - ${#vis})) ""
+    printf "${D}${GR}┊${N} ${D}%s${N}" "$spec"
+    [[ -n "$note" ]] && printf "  ${D}${I}%s${N}" "$note"
+    printf "\n"
+}
+
+section() {
+    # $1 titre, $2 (optionnel) annotation à droite
+    local title="$1" annot="${2:-}"
+    printf "\n${B}${M}▸ %s${N}" "$title"
+    [[ -n "$annot" ]] && printf "  ${D}%s${N}" "$annot"
+    printf "\n"
+}
+
+# Parse la table de prérequis (capture avant boucle pour propager exit)
+SPEC_RAW=$(requirements "$VERSION") || exit $?
+declare -A SPEC
+while IFS='=' read -r k v; do
+    [[ -z "$k" ]] && continue
+    SPEC[$k]="$v"
+done <<< "$SPEC_RAW"
+
+# ─────────────────────────── header ─────────────────────────────
+SYS="$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -sr)"
+HOST="$(hostname)"
+
+# Largeur fixe pour un rendu propre sur tous les terminaux
+W=64
+hline=""; i=0; while ((i<W)); do hline+="─"; ((i++)); done
+
+pad() { local n=$1; ((n<0)) && n=0; printf "%*s" "$n" ""; }
+
+# Tronque si nécessaire pour ne pas casser l'encadré
+title_text="Adobe Commerce / Magento $VERSION"
+info_text="$SYS · $HOST"
+[[ ${#info_text} -gt $((W-4)) ]] && info_text="${info_text:0:$((W-7))}..."
+
+echo
+printf "${C}╭%s╮${N}\n" "$hline"
+printf "${C}│${N}  ${B}m2vcheck${N} ${D}·${N} ${B}${M}%s${N}%s${C}│${N}\n" \
+    "$title_text" "$(pad $((W - 13 - ${#title_text})))"
+printf "${C}│${N}  ${D}%s${N}%s${C}│${N}\n" \
+    "$info_text" "$(pad $((W - 2 - ${#info_text})))"
+printf "${C}╰%s╯${N}\n" "$hline"
+
+# ───────────────────── composants simples ───────────────────────
+
+check_simple() {
+    local label="$1" key="$2" detect_fn="$3" optional="${4:-0}"
+    local spec="${SPEC[$key]:-}"
+    local v
+    v=$($detect_fn)
+    if [[ -z "$spec" ]]; then
+        # Magento ne mentionne pas ce composant pour cette version
+        [[ -z "$v" ]] && return
+        print_line "$label" warn "$v" "non listé" "présent mais non listé par Adobe pour Magento $VERSION"
+        return
+    fi
+    if [[ -z "$v" ]]; then
+        print_line "$label" abs "" "$spec"
+        [[ "$optional" == "0" ]] && FAILED=1
+    elif matches_spec "$v" "$spec"; then
+        print_line "$label" ok "$v" "$spec"
+    else
+        print_line "$label" ko "$v" "$spec"
+        [[ "$optional" == "0" ]] && FAILED=1
+    fi
+}
+
+# Groupe de composants alternatifs (au moins un doit matcher)
+check_alt_group() {
+    local title="$1"; shift
+    # Pré-évaluation pour décider de l'annotation du titre
+    local any_match=0 any_expected=0
+    local entries=("$@") entry
+    declare -a results=()
+    for entry in "${entries[@]}"; do
+        local label key fn
+        IFS='|' read -r label key fn <<<"$entry"
+        local spec="${SPEC[$key]:-}"
+        local v
+        v=$($fn)
+        if [[ -z "$spec" ]]; then
+            if [[ -n "$v" ]]; then
+                results+=("warn|$label|$v|non supporté|présent mais pas listé par Adobe pour Magento $VERSION")
+            fi
+            continue
+        fi
+        any_expected=1
+        if [[ -z "$v" ]]; then
+            results+=("abs|$label||$spec|")
+        elif matches_spec "$v" "$spec"; then
+            results+=("ok|$label|$v|$spec|")
+            any_match=1
+        else
+            results+=("ko|$label|$v|$spec|")
+        fi
+    done
+
+    local annot="${D}(au moins un requis)${N}"
+    if [[ "$any_expected" == "1" && "$any_match" == "0" ]]; then
+        annot="${R}${B}⚠ aucun composant valide dans ce groupe${N}"
+        FAILED=1
+    elif [[ "$any_match" == "1" ]]; then
+        annot="${G}${D}✓ groupe couvert${N}"
+    fi
+    section "$title" "$annot"
+
+    for r in "${results[@]}"; do
+        IFS='|' read -r st lb vr sp nt <<<"$r"
+        print_line "$lb" "$st" "$vr" "$sp" "$nt"
+    done
+}
+
+section "Langage & outils"
+check_simple "PHP"       php       detect_php
+check_simple "Composer"  composer  detect_composer
+
+check_alt_group "Base de données" \
+    "MariaDB|mariadb|detect_mariadb" \
+    "MySQL|mysql|detect_mysql"
+
+check_alt_group "Cache (session/page)" \
+    "Valkey|valkey|detect_valkey" \
+    "Redis|redis|detect_redis"
+
+check_alt_group "Moteur de recherche" \
+    "OpenSearch|opensearch|detect_opensearch" \
+    "Elasticsearch|elasticsearch|detect_elasticsearch"
+
+check_alt_group "Serveur web" \
+    "Nginx|nginx|detect_nginx" \
+    "Apache|apache|detect_apache"
+
+section "Composants additionnels" "${D}(facultatifs)${N}"
+check_simple "RabbitMQ" rabbitmq detect_rabbitmq 1
+check_simple "Varnish"  varnish  detect_varnish 1
+
+# ─────────────────────── extensions PHP ─────────────────────────
+
+EXT_OK=0; EXT_MISS=0
+if command -v php >/dev/null 2>&1; then
+    REQ_EXT=(bcmath ctype curl dom fileinfo gd hash iconv intl mbstring
+             openssl pcre pdo_mysql simplexml soap sockets sodium tokenizer
+             xmlwriter xsl zip opcache)
+    INSTALLED_EXT=$(php -m 2>/dev/null | tr '[:upper:]' '[:lower:]')
+
+    missing=()
+    states=()
+    for ext in "${REQ_EXT[@]}"; do
+        if [[ "$ext" == "opcache" ]]; then
+            echo "$INSTALLED_EXT" | grep -q "opcache" && states+=("1") || { states+=("0"); missing+=("$ext"); }
+        else
+            echo "$INSTALLED_EXT" | grep -qx "$ext" && states+=("1") || { states+=("0"); missing+=("$ext"); }
+        fi
+    done
+    EXT_OK=$(( ${#REQ_EXT[@]} - ${#missing[@]} ))
+    EXT_MISS=${#missing[@]}
+
+    if [[ $EXT_MISS -eq 0 ]]; then
+        section "Extensions PHP" "${G}${D}✓ ${EXT_OK}/${#REQ_EXT[@]} présentes${N}"
+    else
+        section "Extensions PHP" "${R}${B}✗ ${EXT_MISS} manquante(s)${N} ${D}sur ${#REQ_EXT[@]}${N}"
+        FAILED=1
+    fi
+
+    # Grille : 4 colonnes de largeur 14
+    n=${#REQ_EXT[@]}
+    i=0
+    while ((i<n)); do
+        printf "  "
+        for c in 0 1 2 3; do
+            idx=$((i+c))
+            ((idx>=n)) && break
+            ext="${REQ_EXT[$idx]}"
+            if [[ "${states[$idx]}" == "1" ]]; then
+                printf "${G}✓${N} %-12s" "$ext"
+            else
+                printf "${R}✗${N} ${R}%-12s${N}" "$ext"
+            fi
+        done
+        printf "\n"
+        i=$((i+4))
+    done
+fi
+
+# ─────────────────────────── footer ─────────────────────────────
+echo
+printf "${GR}%s${N}\n" "$hline"
+
+TOTAL=$((OK_COUNT + KO_COUNT + ABS_COUNT + WARN_COUNT))
+STAT="${G}${OK_COUNT} ok${N}"
+[[ $KO_COUNT  -gt 0 ]] && STAT="${STAT} ${D}·${N} ${R}${KO_COUNT} ko${N}"
+[[ $ABS_COUNT -gt 0 ]] && STAT="${STAT} ${D}·${N} ${GR}${ABS_COUNT} absent${N}"
+[[ $WARN_COUNT -gt 0 ]] && STAT="${STAT} ${D}·${N} ${Y}${WARN_COUNT} avert.${N}"
+EXTSTAT=""
+if [[ $EXT_OK -gt 0 || $EXT_MISS -gt 0 ]]; then
+    if [[ $EXT_MISS -eq 0 ]]; then
+        EXTSTAT=" ${D}·${N} ${G}ext: ${EXT_OK}/${#REQ_EXT[@]}${N}"
+    else
+        EXTSTAT=" ${D}·${N} ${R}ext: ${EXT_OK}/${#REQ_EXT[@]}${N}"
+    fi
+fi
+
+if [[ "$FAILED" == "0" ]]; then
+    printf " ${G}${REV} ✓ CONFORME ${N} ${G}Magento %s ${N} ${D}·${N} %s%s\n" \
+        "$VERSION" "$STAT" "$EXTSTAT"
+else
+    printf " ${R}${REV} ✗ NON CONFORME ${N} ${R}Magento %s ${N} ${D}·${N} %s%s\n" \
+        "$VERSION" "$STAT" "$EXTSTAT"
+fi
+printf "${GR}%s${N}\n" "$hline"
+
+printf "${D}Source : https://experienceleague.adobe.com/fr/docs/commerce-operations/installation-guide/system-requirements${N}\n"
+echo
+
+exit "$FAILED"
