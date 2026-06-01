@@ -152,7 +152,9 @@ EOF
 
 detect_php() {
     command -v php >/dev/null 2>&1 || return
-    php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION.".".PHP_RELEASE_VERSION;' 2>/dev/null
+    # -n : ignore les php.ini → évite les warnings d'extensions au démarrage
+    php -n -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION.".".PHP_RELEASE_VERSION;' 2>/dev/null \
+        | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
 detect_composer() {
@@ -190,20 +192,49 @@ detect_valkey() {
     valkey-server --version 2>/dev/null | grep -oP 'v=\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
-detect_opensearch() {
+# Tente l'API REST (http puis https) sur localhost:9200 et renvoie
+# "distribution|version" si la réponse est exploitable.
+_query_search_api() {
     command -v curl >/dev/null 2>&1 || return
-    local body
-    body=$(curl -fsS -m 2 http://localhost:9200/ 2>/dev/null) || return
-    echo "$body" | grep -qi '"distribution"[[:space:]]*:[[:space:]]*"opensearch"' || return
-    echo "$body" | grep -oP '"number"[[:space:]]*:[[:space:]]*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    local body distrib number
+    body=$(curl -fsS -m 2 http://localhost:9200/ 2>/dev/null) \
+      || body=$(curl -fsSk -m 2 https://localhost:9200/ 2>/dev/null) \
+      || return
+    distrib=$(echo "$body" | grep -oP '"distribution"[[:space:]]*:[[:space:]]*"\K[^"]+' | head -1)
+    number=$(echo "$body" | grep -oP '"number"[[:space:]]*:[[:space:]]*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    [[ -n "$number" ]] || return
+    # Pas de champ "distribution" → Elasticsearch < 7.10
+    [[ -z "$distrib" ]] && distrib="elasticsearch"
+    echo "${distrib}|${number}"
+}
+
+detect_opensearch() {
+    local r d n
+    r=$(_query_search_api)
+    if [[ -n "$r" ]]; then
+        d="${r%%|*}"; n="${r##*|}"
+        [[ "$d" == "opensearch" ]] && { echo "$n"; return; }
+    fi
+    # Fallback : paquet Debian (utile quand la sécurité TLS bloque l'API)
+    if command -v dpkg-query >/dev/null 2>&1; then
+        local v
+        v=$(dpkg-query -W -f='${Version}' opensearch 2>/dev/null || true)
+        [[ -n "$v" ]] && echo "$v" | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    fi
 }
 
 detect_elasticsearch() {
-    command -v curl >/dev/null 2>&1 || return
-    local body
-    body=$(curl -fsS -m 2 http://localhost:9200/ 2>/dev/null) || return
-    echo "$body" | grep -qi '"distribution"[[:space:]]*:[[:space:]]*"opensearch"' && return
-    echo "$body" | grep -oP '"number"[[:space:]]*:[[:space:]]*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    local r d n
+    r=$(_query_search_api)
+    if [[ -n "$r" ]]; then
+        d="${r%%|*}"; n="${r##*|}"
+        [[ "$d" == "elasticsearch" ]] && { echo "$n"; return; }
+    fi
+    if command -v dpkg-query >/dev/null 2>&1; then
+        local v
+        v=$(dpkg-query -W -f='${Version}' elasticsearch 2>/dev/null || true)
+        [[ -n "$v" ]] && echo "$v" | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    fi
 }
 
 detect_rabbitmq() {
