@@ -20,7 +20,7 @@ spec [published by Adobe](https://experienceleague.adobe.com/en/docs/commerce-op
   ✓ Composer       2.9.4          ┊ 2.9.3+
 
 ▸ Base de données  ✓ groupe couvert
-  ✓ MariaDB        11.8.2         ┊ 11.8,12.3
+  ✓ MariaDB        12.3.1         ┊ 12.3
   ○ MySQL          —              ┊ 8.4
 
 ...
@@ -59,10 +59,17 @@ sudo install -m 755 m2vcheck/m2vcheck /usr/local/bin/m2vcheck
 ## Usage
 
 ```bash
-m2vcheck 2.4.9     # check the current server against Magento 2.4.9 requirements
-m2vcheck --list    # list supported Magento versions
-m2vcheck --help    # usage
+m2vcheck 2.4.9        # check against the requirements of Magento 2.4.9
+m2vcheck 2.4.7-p9     # check against a specific patch (extended support)
+m2vcheck 2.4.7        # alias → resolves to the latest patch of the branch (2.4.7-p10)
+m2vcheck --list       # list supported Magento versions
+m2vcheck --help       # usage
 ```
+
+The data covers every entry currently published in Adobe's on-premises
+matrix — by default 11 patch-level versions across the 2.4.4 → 2.4.9
+branches. Bare branch names (`2.4.4` … `2.4.8`) alias to the latest
+patch of that branch.
 
 ### Exit codes
 
@@ -83,7 +90,8 @@ script:
 
 ## What is checked
 
-For each Magento version (2.4.4 → 2.4.9), the script verifies:
+For each supported Magento patch (2.4.9 and the last two patches of
+branches 2.4.4 → 2.4.8), the script verifies:
 
 - **Language & tooling** — PHP, Composer
 - **Database** (at least one) — MariaDB, MySQL
@@ -122,12 +130,14 @@ Markers:
 ## Adding a new Magento version
 
 Open `m2vcheck` and add a new branch to the `requirements()` `case`
-statement at the top:
+statement (use the exact patch label Adobe uses, e.g. `2.4.9-p1`), then
+append it to `KNOWN_VERSIONS` and — if it's the new latest patch of a
+branch — update the alias block at the top of the script.
 
 ```bash
-2.4.10)
+2.4.9-p1)
     cat <<EOF
-php=8.5,8.6
+php=8.5
 composer=2.9.3+
 mariadb=12.3
 mysql=8.4
@@ -135,8 +145,7 @@ opensearch=3
 valkey=9
 rabbitmq=4.2
 varnish=8
-nginx=1.28
-apache=2.4
+nginx=1.30
 EOF
     ;;
 ```
