@@ -483,9 +483,12 @@ check_simple() {
         [[ "$optional" == "0" ]] && FAILED=1
     elif matches_spec "$v" "$spec"; then
         print_line "$label" ok "$v" "$spec"
+    elif [[ "$optional" == "1" ]]; then
+        # Facultatif : version hors liste => avertissement, jamais un échec
+        print_line "$label" warn "$v" "$spec" "facultatif — non bloquant"
     else
         print_line "$label" ko "$v" "$spec"
-        [[ "$optional" == "0" ]] && FAILED=1
+        FAILED=1
     fi
 }
 
