@@ -74,12 +74,12 @@ requirements() {
         2.4.9)
             cat <<EOF
 php=8.5
-composer=2.9.3+
-mariadb=12.3
+composer=2.10+
+mariadb=11.8,12.3
 mysql=8.4
 opensearch=3
 valkey=9
-rabbitmq=4.2
+rabbitmq=4.3
 varnish=8
 nginx=1.30
 EOF
