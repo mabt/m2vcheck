@@ -496,7 +496,7 @@ check_simple() {
 check_alt_group() {
     local title="$1"; shift
     # Pré-évaluation pour décider de l'annotation du titre
-    local any_match=0 any_expected=0
+    local any_match=0 any_expected=0 any_unlisted=0
     local entries=("$@") entry
     declare -a results=()
     for entry in "${entries[@]}"; do
@@ -507,7 +507,8 @@ check_alt_group() {
         v=$($fn </dev/null)
         if [[ -z "$spec" ]]; then
             if [[ -n "$v" ]]; then
-                results+=("warn|$label|$v|non supporté|présent mais pas listé par Adobe pour Magento $VERSION")
+                results+=("warn|$label|$v|non listé|présent mais pas listé par Adobe pour Magento $VERSION")
+                any_unlisted=1
             fi
             continue
         fi
@@ -523,11 +524,15 @@ check_alt_group() {
     done
 
     local annot="${D}(au moins un requis)${N}"
-    if [[ "$any_expected" == "1" && "$any_match" == "0" ]]; then
+    if [[ "$any_match" == "1" ]]; then
+        annot="${G}${D}✓ groupe couvert${N}"
+    elif [[ "$any_unlisted" == "1" ]]; then
+        # Composant présent mais hors matrice Adobe : couvre le groupe,
+        # sans échec — le détail reste visible sur la ligne du composant.
+        annot="${Y}⚠ couvert hors matrice Adobe${N}"
+    elif [[ "$any_expected" == "1" ]]; then
         annot="${R}${B}⚠ aucun composant valide dans ce groupe${N}"
         FAILED=1
-    elif [[ "$any_match" == "1" ]]; then
-        annot="${G}${D}✓ groupe couvert${N}"
     fi
     section "$title" "$annot"
 
